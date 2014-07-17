@@ -90,7 +90,7 @@ pub trait Server: Send + Clone {
                             // No good user-agent should have caused this, so for the moment
                             // at least I am content to send no body in the response.
                             response.status = status;
-                            response.headers.content_length = Some(0);
+                            response.headers.content_length(Some(0));
                             match response.write_headers() {
                                 Err(err) => {
                                     error!("Writing headers failed: {}", err);

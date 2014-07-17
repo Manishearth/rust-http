@@ -161,7 +161,7 @@ impl<S: Reader + Writer = super::NetworkStream> RequestWriter<S> {
             request.use_ssl = request.url.scheme.as_slice() == "https";
         }
 
-        request.headers.host = Some(host);
+        request.headers.host(Some(host));
         Ok(request)
     }
 }

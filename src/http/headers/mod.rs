@@ -871,37 +871,35 @@ macro_rules! headers_mod {
 
             #[allow(unused_imports)]
             use std::io::{BufReader, IoResult};
-            use std::ascii::OwnedStrAsciiExt;
+            use std::ascii::{StrAsciiExt, OwnedStrAsciiExt};
             use time;
-            use collections::treemap::{TreeMap, Entries};
             use headers;
             use headers::{HeaderEnum, HeaderConvertible, HeaderValueByteIterator};
+            use std::path::BytesContainer;
+            use std::str;
+            use std::slice::Items;
 
-            pub enum Header {
-                $($caps_ident($htype),)*
-                ExtensionHeader(String, String),
+            #[deriving(Clone, PartialEq)]
+            pub struct Header {
+                pub name: Vec<u8>,
+                pub value: Vec<u8>
             }
 
             #[deriving(Clone)]
             pub struct HeaderCollection {
-                $(pub $lower_ident: Option<$htype>,)*
-                pub extensions: TreeMap<String, String>,
+                headers: Vec<Header>
             }
 
             impl HeaderCollection {
                 pub fn new() -> HeaderCollection {
                     HeaderCollection {
-                        $($lower_ident: None,)*
-                        extensions: TreeMap::new(),
+                        headers: Vec::new()
                     }
                 }
 
                 /// Consume a header, putting it into this structure.
                 pub fn insert(&mut self, header: Header) {
-                    match header {
-                        $($caps_ident(value) => self.$lower_ident = Some(value),)*
-                        ExtensionHeader(key, value) => { self.extensions.insert(key, value); },
-                    }
+                    self.headers.push(header)
                 }
 
                 /// Insert a raw header into the collection.
@@ -920,11 +918,7 @@ macro_rules! headers_mod {
                 }
 
                 pub fn iter<'a>(&'a self) -> HeaderCollectionIterator<'a> {
-                    HeaderCollectionIterator {
-                        pos: 0,
-                        coll: self,
-                        ext_iter: None
-                    }
+                    self.headers.iter()
                 }
 
                 /// Write all the headers to a writer. This includes an extra \r\n at the end to
@@ -935,83 +929,62 @@ macro_rules! headers_mod {
                     }
                     writer.write(b"\r\n")
                 }
-            }
 
-            pub struct HeaderCollectionIterator<'a> {
-                pos: uint,
-                coll: &'a HeaderCollection,
-                ext_iter: Option<Entries<'a, String, String>>
-            }
-
-            impl<'a> Iterator<Header> for HeaderCollectionIterator<'a> {
-                fn next(&mut self) -> Option<Header> {
-                    loop {
-                        self.pos += 1;
-                        match self.pos - 1 {
-                            $($num_id => match self.coll.$lower_ident {
-                                Some(ref v) => return Some($caps_ident(v.clone())),
-                                None => continue,
-                            },)*
-                            $num_headers => {
-                                self.ext_iter = Some(self.coll.extensions.iter());
-                                continue
-                            },
-                            _ => match self.ext_iter.get_mut_ref().next() {
-                                Some((k, v)) =>
-                                    return Some(ExtensionHeader(k.clone(), v.clone())),
-                                None => return None,
-                            },
-                        }
+                // Setters for various known header types
+                $(
+                    pub fn $lower_ident (&mut self, val: Option<$htype>) {
+                        let mut vec: Vec<Header> = self.headers.clone().move_iter().filter(|h| 
+                            match h.header_name().into_ascii_lower().as_slice() {
+                                $input_name => false,
+                                _ => true
+                            }
+                        ).collect();
+                        val.map(|v| {
+                            let header = Header {
+                                name: $output_name.container_into_owned_bytes(),
+                                value: v.http_value().container_into_owned_bytes()
+                            };
+                            vec.push(header)
+                        });
+                        self.headers = vec;
                     }
+                )*
+
+                pub fn get<'a>(&'a self, name: &str) -> Option<&'a Header> {
+                    self.headers.iter().find(|h| h.header_name().as_slice().eq_ignore_ascii_case(name))
+                }
+
+                pub fn get_converted<T: HeaderConvertible>(&self, name: &str) -> Option<T> {
+                    let maybe_header = self.headers.iter().find(|h| h.header_name().as_slice().eq_ignore_ascii_case(name));
+                    maybe_header.and_then(|h| {
+                        let mut reader = BufReader::new(h.name.as_slice());
+                        let mut iter = HeaderValueByteIterator::new(&mut reader);
+                        HeaderConvertible::from_stream(&mut iter)
+                    })
                 }
             }
+
+            pub type HeaderCollectionIterator<'a> = Items<'a, Header>;
 
             impl HeaderEnum for Header {
                 fn header_name(&self) -> String {
-                    match *self {
-                        $($caps_ident(_) => String::from_str($output_name),)*
-                        ExtensionHeader(ref name, _) => name.clone(),
-                    }
+                    str::from_utf8(self.name.as_slice()).to_string()
                 }
 
                 fn header_value(&self) -> String {
-                    match *self {
-                        $($caps_ident(ref h) => h.http_value(),)*
-                        ExtensionHeader(_, ref value) => value.clone(),
-                    }
+                    str::from_utf8(self.value.as_slice()).to_string()
                 }
 
                 fn write_header<W: Writer>(&self, writer: &mut W) -> IoResult<()> {
-                    match *self {
-                        ExtensionHeader(ref name, ref value) => {
-                            return write!(&mut *writer as &mut Writer,
-                                          "{}: {}\r\n", *name, *value);
-                        },
-                        _ => (),
-                    }
-
-                    try!(write!(&mut *writer as &mut Writer, "{}: ", match *self {
-                        $($caps_ident(_) => $output_name,)*
-                        ExtensionHeader(..) => unreachable!(),  // Already returned
-                    }));
-
-                    // FIXME: all the `h` cases satisfy HeaderConvertible, can it be simplified?
-                    try!(match *self {
-                        $($caps_ident(ref h) => h.to_stream(writer),)*
-                        ExtensionHeader(..) => unreachable!(),  // Already returned
-                    });
-                    write!(&mut *writer as &mut Writer, "\r\n")
+                    write!(&mut *writer as &mut Writer, "{}: {}\r\n", self.header_name(), self.header_value())
                 }
 
                 fn value_from_stream<R: Reader>(name: String, value: &mut HeaderValueByteIterator<R>)
                         -> Option<Header> {
-                    match name.clone().into_ascii_lower().as_slice() {
-                        $($input_name => match HeaderConvertible::from_stream(value) {
-                            Some(v) => Some($caps_ident(v)),
-                            None => None,
-                        },)*
-                        _ => Some(ExtensionHeader(name, value.collect_to_string())),
-                    }
+                    Some(Header {
+                        name: name.container_into_owned_bytes(),
+                        value: value.collect()
+                    })
                 }
             }
         }

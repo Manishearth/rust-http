@@ -9,7 +9,6 @@ use rfc2616::{CR, LF, SP};
 use headers;
 use buffer::BufferedStream;
 use common::read_http_version;
-
 use headers::{HeaderLineErr, EndOfFile, EndOfHeaders, MalformedHeaderSyntax, MalformedHeaderValue};
 
 // /// Line/header can't be more than 4KB long (note that with the compacting of LWS the actual source
@@ -346,14 +345,14 @@ impl Request {
         }
 
         // HTTP/1.0 doesn't have Host, but HTTP/1.1 requires it
-        if request.version == (1, 1) && request.headers.host.is_none() {
+        if request.version == (1, 1) && request.headers.get("host").is_none() {
             println!("BAD REQUEST: host is none for HTTP/1.1 request");
             return (request, Err(status::BadRequest));
         }
 
         request.close_connection = close_connection;
-        match request.headers.connection {
-            Some(ref h) => for v in h.iter() {
+        match request.headers.get_converted::<Vec<headers::connection::Connection>>("connection") {
+            Some(h) => for v in h.iter() {
                 match *v {
                     headers::connection::Close => {
                         request.close_connection = true;
@@ -370,7 +369,7 @@ impl Request {
         }
 
         // Read body if its length is specified
-        match request.headers.content_length {
+        match request.headers.get_converted::<uint>("content_length") {
             Some(length) => {
                 match buffer.read_exact(length) {
                     Ok(body) => match String::from_utf8(body) {

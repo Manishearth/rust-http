@@ -39,9 +39,9 @@ impl<'a> ResponseWriter<'a> {
     /// Write a response with the specified Content-Type and content; the Content-Length header is
     /// set based upon the contents
     pub fn write_content_auto(&mut self, content_type: MediaType, content: String) -> IoResult<()> {
-        self.headers.content_type = Some(content_type);
+        self.headers.content_type(Some(content_type));
         let cbytes = content.as_bytes();
-        self.headers.content_length = Some(cbytes.len());
+        self.headers.content_length(Some(cbytes.len()));
         try!(self.write_headers());
         self.write(cbytes)
     }
@@ -80,14 +80,14 @@ impl<'a> ResponseWriter<'a> {
         // extensible thing, whereby client and server could agree upon extra transformations to
         // apply. In such a case, chunked MUST come last. This way prevents it from being extensible
         // thus, which is suboptimal.
-        if self.headers.content_length == None {
-            self.headers.transfer_encoding = Some(vec!(Chunked));
+        if self.headers.get("content-length") == None {
+            self.headers.transfer_encoding(Some(vec!(Chunked)));
         } else {
-            self.headers.transfer_encoding = None;
+            self.headers.transfer_encoding(None);
         }
         try!(self.headers.write_all(&mut *self.writer));
         self.headers_written = true;
-        if self.headers.content_length == None {
+        if self.headers.get("content-length") == None {
             // Flush so that the chunked body stuff can start working correctly. TODO: don't
             // actually flush it entirely, or else it'll send the headers in a separate TCP packet,
             // which is bad for performance.
